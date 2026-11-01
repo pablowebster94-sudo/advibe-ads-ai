@@ -1,0 +1,366 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ───────── Multi-organización (preparado para SaaS) ─────────
+model Organization {
+  id        String   @id @default(cuid())
+  name      String
+  createdAt DateTime @default(now())
+
+  users       User[]
+  clients     Client[]
+  connections MetaConnection[]
+  rules       AutomationRule[]
+  settings    Setting[]
+  auditLogs   AuditLog[]
+  alerts      Alert[]
+}
+
+model User {
+  id           String       @id @default(cuid())
+  orgId        String
+  org          Organization @relation(fields: [orgId], references: [id], onDelete: Cascade)
+  email        String       @unique
+  name         String?
+  passwordHash String
+  role         Role         @default(OWNER)
+  createdAt    DateTime     @default(now())
+}
+
+enum Role {
+  OWNER
+  ADMIN
+  MEMBER
+  VIEWER
+}
+
+// ───────── Clientes ─────────
+model Client {
+  id          String       @id @default(cuid())
+  orgId       String
+  org         Organization @relation(fields: [orgId], references: [id], onDelete: Cascade)
+  name        String
+  industry    String?
+  website     String?
+  description String?
+  brandColors String[]     @default([])
+  fontHeading String?
+  fontBody    String?
+  voice       String?      // tono de comunicación
+  goals       String?
+  monthlyBudget Float?
+  currency    String       @default("USD")
+  locations   String[]     @default([])
+  whatsapp    String?
+  logoAssetId String?
+  active      Boolean      @default(true)
+  createdAt   DateTime     @default(now())
+  updatedAt   DateTime     @updatedAt
+
+  products    Product[]
+  assets      Asset[]
+  links       ClientMetaLink[]
+  creatives   Creative[]
+  strategies  Strategy[]
+  drafts      CampaignDraft[]
+  alerts      Alert[]
+
+  @@index([orgId])
+}
+
+model Product {
+  id          String   @id @default(cuid())
+  clientId    String
+  client      Client   @relation(fields: [clientId], references: [id], onDelete: Cascade)
+  kind        String   @default("producto") // producto | servicio | oferta
+  name        String
+  description String?
+  price       Float?
+  offer       String?
+  url         String?
+  createdAt   DateTime @default(now())
+
+  @@index([clientId])
+}
+
+model Asset {
+  id        String   @id @default(cuid())
+  clientId  String
+  client    Client   @relation(fields: [clientId], references: [id], onDelete: Cascade)
+  kind      String   // logo | original | generated | export
+  name      String
+  mimeType  String
+  width     Int?
+  height    Int?
+  data      Bytes
+  meta      Json?
+  createdAt DateTime @default(now())
+
+  @@index([clientId, kind])
+}
+
+// ───────── Meta ─────────
+model MetaConnection {
+  id             String       @id @default(cuid())
+  orgId          String
+  org            Organization @relation(fields: [orgId], references: [id], onDelete: Cascade)
+  label          String
+  method         String       // oauth | token
+  metaUserId     String?
+  metaUserName   String?
+  tokenEnc       String       // AES-256-GCM
+  tokenExpiresAt DateTime?
+  grantedScopes  String[]     @default([])
+  declinedScopes String[]     @default([])
+  status         String       @default("ACTIVE") // ACTIVE | ERROR | EXPIRED
+  lastError      String?
+  lastCheckedAt  DateTime?
+  createdAt      DateTime     @default(now())
+
+  adAccounts MetaAdAccount[]
+}
+
+model MetaAdAccount {
+  id           String         @id @default(cuid())
+  connectionId String
+  connection   MetaConnection @relation(fields: [connectionId], references: [id], onDelete: Cascade)
+  actId        String         // act_123
+  name         String
+  currency     String?
+  timezone     String?
+  status       Int?
+  balance      String?
+  amountSpent  String?
+  // activos verificados desde la API (nunca asumidos)
+  pages        Json?          // [{id,name,igId?}]
+  igAccounts   Json?          // [{id,username}]
+  pixels       Json?          // [{id,name}]
+  audiences    Json?          // [{id,name,subtype,approxSize}]
+  assetsCheckedAt DateTime?
+  assetsError  String?
+  syncedAt     DateTime?
+  lastSyncError String?
+
+  links    ClientMetaLink[]
+  entities MetaEntity[]
+  insights InsightSnapshot[]
+
+  @@unique([connectionId, actId])
+}
+
+model ClientMetaLink {
+  id          String        @id @default(cuid())
+  clientId    String
+  client      Client        @relation(fields: [clientId], references: [id], onDelete: Cascade)
+  adAccountId String
+  adAccount   MetaAdAccount @relation(fields: [adAccountId], references: [id], onDelete: Cascade)
+  pageId      String?
+  igAccountId String?
+  pixelId     String?
+
+  @@unique([clientId, adAccountId])
+}
+
+model MetaEntity {
+  id          String        @id @default(cuid())
+  adAccountId String
+  adAccount   MetaAdAccount @relation(fields: [adAccountId], references: [id], onDelete: Cascade)
+  level       String        // campaign | adset | ad
+  metaId      String
+  parentId    String?
+  name        String
+  status      String?
+  effectiveStatus String?
+  objective   String?
+  dailyBudget Float?        // unidades mayores de moneda
+  lifetimeBudget Float?
+  raw         Json?
+  syncedAt    DateTime      @default(now())
+
+  @@unique([adAccountId, level, metaId])
+  @@index([adAccountId, level])
+}
+
+model InsightSnapshot {
+  id          String        @id @default(cuid())
+  adAccountId String
+  adAccount   MetaAdAccount @relation(fields: [adAccountId], references: [id], onDelete: Cascade)
+  date        DateTime      @db.Date
+  campaignId  String
+  adsetId     String
+  adId        String
+  spend       Float         @default(0)
+  impressions Int           @default(0)
+  reach       Int           @default(0)
+  clicks      Int           @default(0)
+  frequency   Float         @default(0)
+  conversations Int         @default(0)
+  leads       Int           @default(0)
+  purchases   Int           @default(0)
+  purchaseValue Float       @default(0)
+
+  @@unique([adAccountId, date, adId])
+  @@index([adAccountId, date])
+}
+
+// ───────── Creative Studio ─────────
+model Creative {
+  id        String   @id @default(cuid())
+  clientId  String
+  client    Client   @relation(fields: [clientId], references: [id], onDelete: Cascade)
+  title     String
+  format    String   // 1:1 | 4:5 | 9:16
+  mode      String   // original | ai_scene | ai_background
+  assetId   String?  // imagen final
+  sourceAssetId String?
+  headline  String?
+  primaryText String?
+  description String?
+  cta       String?
+  price     String?
+  badges    String[] @default([])
+  prompt    String?
+  provider  String?
+  reviewed  Boolean  @default(false) // revisión humana de fidelidad de producto
+  variantGroup String?
+  createdAt DateTime @default(now())
+
+  @@index([clientId])
+}
+
+// ───────── Estrategia y Campaign Builder ─────────
+model Strategy {
+  id        String   @id @default(cuid())
+  clientId  String
+  client    Client   @relation(fields: [clientId], references: [id], onDelete: Cascade)
+  objective String
+  brief     String?
+  content   Json
+  basedOnData Boolean @default(false)
+  provider  String?
+  createdAt DateTime @default(now())
+
+  @@index([clientId])
+}
+
+model CampaignDraft {
+  id          String   @id @default(cuid())
+  clientId    String
+  client      Client   @relation(fields: [clientId], references: [id], onDelete: Cascade)
+  name        String
+  adAccountId String?
+  pageId      String?
+  igAccountId String?
+  pixelId     String?
+  objective   String   @default("OUTCOME_ENGAGEMENT")
+  destination String   @default("WEBSITE") // WEBSITE | WHATSAPP | MESSENGER | INSTAGRAM_DM | FORM
+  dailyBudget Float    @default(5)
+  startTime   DateTime?
+  endTime     DateTime?
+  specialAdCategories String[] @default([])
+  adsets      Json     @default("[]")  // [{name,targeting,ads:[{name,creativeId,headline,primaryText,description,cta,link}]}]
+  status      String   @default("DRAFT") // DRAFT | PUBLISHED_PAUSED | FAILED
+  metaCampaignId String?
+  lastError   String?
+  publishedAt DateTime?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  logs PublishLog[]
+
+  @@index([clientId])
+}
+
+model PublishLog {
+  id        String        @id @default(cuid())
+  draftId   String
+  draft     CampaignDraft @relation(fields: [draftId], references: [id], onDelete: Cascade)
+  step      String
+  ok        Boolean
+  metaId    String?
+  message   String?
+  createdAt DateTime      @default(now())
+}
+
+// ───────── Automatizaciones ─────────
+model AutomationRule {
+  id        String       @id @default(cuid())
+  orgId     String
+  org       Organization @relation(fields: [orgId], references: [id], onDelete: Cascade)
+  name      String
+  type      String       // LOW_PERFORMANCE | HIGH_CPA | OPPORTUNITY | BUDGET_SCALE | FATIGUE
+  params    Json
+  action    String       @default("ALERT") // ALERT | PROPOSE_PAUSE | PROPOSE_BUDGET
+  enabled   Boolean      @default(true)
+  createdAt DateTime     @default(now())
+
+  proposals AutomationProposal[]
+}
+
+model AutomationProposal {
+  id        String         @id @default(cuid())
+  ruleId    String?
+  rule      AutomationRule? @relation(fields: [ruleId], references: [id], onDelete: SetNull)
+  adAccountId String
+  entityLevel String
+  entityId  String
+  entityName String?
+  action    String         // PAUSE | SET_DAILY_BUDGET
+  payload   Json
+  simulation Json
+  reason    String
+  status    String         @default("PENDING") // PENDING | APPROVED | EXECUTED | REJECTED | FAILED
+  result    String?
+  decidedBy String?
+  createdAt DateTime       @default(now())
+  decidedAt DateTime?
+
+  @@index([status])
+}
+
+model Alert {
+  id        String       @id @default(cuid())
+  orgId     String
+  org       Organization @relation(fields: [orgId], references: [id], onDelete: Cascade)
+  clientId  String?
+  client    Client?      @relation(fields: [clientId], references: [id], onDelete: SetNull)
+  kind      String       // warning | opportunity | info
+  title     String
+  detail    String?
+  refKey    String?      // evita duplicados
+  resolved  Boolean      @default(false)
+  createdAt DateTime     @default(now())
+
+  @@unique([orgId, refKey])
+}
+
+// ───────── Config y auditoría ─────────
+model Setting {
+  id       String       @id @default(cuid())
+  orgId    String
+  org      Organization @relation(fields: [orgId], references: [id], onDelete: Cascade)
+  key      String
+  valueEnc String       // cifrado
+  updatedAt DateTime    @updatedAt
+
+  @@unique([orgId, key])
+}
+
+model AuditLog {
+  id        String       @id @default(cuid())
+  orgId     String
+  org       Organization @relation(fields: [orgId], references: [id], onDelete: Cascade)
+  userEmail String?
+  action    String
+  target    String?
+  detail    Json?
+  createdAt DateTime     @default(now())
+
+  @@index([orgId, createdAt])
+}
