@@ -70,7 +70,7 @@ async function create(f: FormData) {
           colors: palette,
         });
         const asset = await db.asset.create({
-          data: { clientId, kind: "generated", name: `${title || "anuncio"}-${fmt.replace(":", "x")}.png`, mimeType: "image/png", data: png },
+          data: { clientId, kind: "generated", name: `${title || "anuncio"}-${fmt.replace(":", "x")}.png`, mimeType: "image/png", data: new Uint8Array(png) },
         });
         await db.creative.create({
           data: {
