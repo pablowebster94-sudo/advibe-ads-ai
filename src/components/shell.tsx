@@ -1,3 +1,0 @@
-import Link from "next/link";
-const links=[["/dashboard","Resumen"],["/clients","Clientes"],["/accounts","Cuentas publicitarias"],["/campaigns","Campañas"],["/strategy","Estrategia IA"],["/studio","Creative Studio"],["/analytics","Analítica"],["/automations","Automatizaciones"],["/settings","Configuración"]];
-export function Shell({children}:{children:React.ReactNode}){return <div className="shell"><aside><div className="brand">AdVibe <span>ADS AI</span></div><nav>{links.map(([href,label])=><Link key={href} href={href}>{label}</Link>)}</nav></aside><main><header><strong>AdVibe Ads AI</strong><span>Panel interno</span></header>{children}</main></div>}

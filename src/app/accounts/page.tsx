@@ -1,2 +1,0 @@
-import {Shell} from "@/components/shell";import {prisma} from "@/lib/prisma";import {AccountsUI} from "./ui";
-export default async function Accounts(){const [accounts,clients]=await Promise.all([prisma.adAccount.findMany({orderBy:{createdAt:"desc"}}),prisma.client.findMany({select:{id:true,name:true}})]);return <Shell><div className="page"><div className="eyebrow">Activos publicitarios</div><h1 className="title">Cuentas publicitarias</h1><AccountsUI accounts={accounts.map(a=>({id:a.id,name:a.name,externalId:a.externalId,status:a.status}))} clients={clients}/></div></Shell>}

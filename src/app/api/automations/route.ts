@@ -1,4 +1,0 @@
-import {NextResponse} from "next/server";import {z} from "zod";import {prisma} from "@/lib/prisma";import {requireUser} from "@/lib/auth";
-const schema=z.object({name:z.string().min(2).max(120),clientId:z.string(),metric:z.string(),operator:z.string(),threshold:z.number()});
-export async function GET(){try{await requireUser();return NextResponse.json(await prisma.automationRule.findMany());}catch{return NextResponse.json({error:"No autorizado"},{status:401});}}
-export async function POST(req:Request){try{await requireUser();const d=schema.parse(await req.json());const rule=await prisma.automationRule.create({data:{...d,enabled:false,action:"ALERT_ONLY"}});return NextResponse.json(rule,{status:201});}catch(e){return NextResponse.json({error:e instanceof Error?e.message:"Solicitud inválida"},{status:400});}}

@@ -1,2 +1,0 @@
-import {Shell} from "@/components/shell";import {prisma} from "@/lib/prisma";import {ClientsUI} from "./ui";
-export default async function Clients(){const clients=await prisma.client.findMany({orderBy:{createdAt:"desc"}});return <Shell><div className="page"><div className="eyebrow">CRM interno</div><h1 className="title">Clientes</h1><ClientsUI clients={clients.map(c=>({id:c.id,name:c.name,industry:c.industry}))}/></div></Shell>}
