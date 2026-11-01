@@ -11,3 +11,7 @@ Este repositorio se está inicializando con el código fuente base. Antes de usa
 El paquete inicial incluye Next.js, TypeScript, Prisma, autenticación de administrador, gestión básica de clientes y cuentas publicitarias, estrategia asistida por IA y un constructor de campañas que mantiene las campañas en pausa.
 
 **No contiene credenciales ni tokens reales.**
+
+## Build
+
+El esquema Prisma fue normalizado en el commit `fd1e6c59555611e6144110b420ed652cdca54d45`. Este commit posterior solicita una nueva compilación automática desde `main` para validar el estado actualizado del proyecto.
