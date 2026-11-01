@@ -1,0 +1,2 @@
+import {NextResponse} from "next/server";import {z} from "zod";import {login} from "@/lib/auth";
+export async function POST(req:Request){try{const d=z.object({email:z.string().email(),password:z.string().min(1)}).parse(await req.json());const ok=await login(d.email,d.password);return ok?NextResponse.json({success:true}):NextResponse.json({error:"Credenciales incorrectas"},{status:401});}catch(e){return NextResponse.json({error:e instanceof Error?e.message:"Solicitud inválida"},{status:400});}}

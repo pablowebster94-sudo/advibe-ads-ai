@@ -1,0 +1,4 @@
+import {NextResponse} from "next/server";import {z} from "zod";import {prisma} from "@/lib/prisma";import {requireUser} from "@/lib/auth";
+const schema=z.object({name:z.string().trim().min(2).max(120),externalId:z.string().trim().min(3).max(120),clientId:z.string().optional()});
+export async function GET(){try{await requireUser();return NextResponse.json(await prisma.adAccount.findMany());}catch{return NextResponse.json({error:"No autorizado"},{status:401});}}
+export async function POST(req:Request){try{await requireUser();const d=schema.parse(await req.json());const account=await prisma.adAccount.create({data:{name:d.name,externalId:d.externalId,status:"PENDING"}});if(d.clientId)await prisma.clientAdAccount.create({data:{clientId:d.clientId,adAccountId:account.id}});return NextResponse.json(account,{status:201});}catch(e){return NextResponse.json({error:e instanceof Error?e.message:"Solicitud inválida"},{status:400});}}
