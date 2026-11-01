@@ -1,0 +1,4 @@
+import { redirect } from "next/navigation";
+import { login } from "@/lib/auth";
+async function submit(formData:FormData){ "use server"; const email=String(formData.get("email")||"");const password=String(formData.get("password")||"");if(await login(email,password))redirect("/dashboard");redirect("/login?error=1");}
+export default function Login({searchParams}:{searchParams:Promise<{error?:string}>}){return <div className="page"><form action={submit} className="panel form"><div className="eyebrow">Acceso privado</div><h1 className="title">AdVibe Ads AI</h1><p className="muted">Ingresa con el usuario administrador configurado en la base de datos.</p><label>Correo electrónico</label><input name="email" type="email" required/><label>Contraseña</label><input name="password" type="password" required/><button className="button">Ingresar</button><p className="muted">No se crea una cuenta de acceso automáticamente.</p></form></div>}
