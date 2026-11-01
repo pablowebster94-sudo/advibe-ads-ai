@@ -1,5 +1,5 @@
 import { db } from "../db";
-import { Row, emptyRow, addRow, totals, fetchRows } from "./kpis";
+import { Row, emptyRow, addRow, totals, fetchRows, CampaignScope } from "./kpis";
 
 export type AdPerf = {
   adId: string;
@@ -19,8 +19,8 @@ export function median(xs: number[]) {
   return s.length % 2 ? s[m] : (s[m - 1] + s[m]) / 2;
 }
 
-export async function adPerformance(accountIds: string[], from: Date, to: Date): Promise<AdPerf[]> {
-  const rows = await fetchRows(accountIds, { from, to });
+export async function adPerformance(accountIds: string[], from: Date, to: Date, scope?: CampaignScope): Promise<AdPerf[]> {
+  const rows = await fetchRows(accountIds, { from, to }, scope);
   const by = new Map<string, { row: Row; freqSum: number; days: number; r0: (typeof rows)[number] }>();
   for (const r of rows) {
     const e = by.get(r.adId) ?? { row: emptyRow(), freqSum: 0, days: 0, r0: r };
@@ -54,14 +54,14 @@ export function classify(perf: AdPerf[], minSpend = 5) {
 }
 
 /** Fatiga: frecuencia >= 3 y CTR cae >= 20% frente a los 7 días anteriores */
-export async function fatigue(accountIds: string[]) {
+export async function fatigue(accountIds: string[], scope?: CampaignScope) {
   const to = new Date();
   to.setUTCHours(0, 0, 0, 0);
   const d7 = new Date(to.getTime() - 6 * 86400000);
   const p7 = new Date(d7.getTime() - 7 * 86400000);
   const [cur, prev] = await Promise.all([
-    adPerformance(accountIds, d7, to),
-    adPerformance(accountIds, p7, new Date(d7.getTime() - 86400000)),
+    adPerformance(accountIds, d7, to, scope),
+    adPerformance(accountIds, p7, new Date(d7.getTime() - 86400000), scope),
   ]);
   const prevMap = new Map(prev.map((p) => [p.adId, p]));
   return cur

@@ -31,19 +31,23 @@ export default async function Dashboard({ searchParams }: { searchParams: Promis
   const byDay = groupBy(curRows as any[], (r) => dateISO(r.date));
   const dayKeys = [...byDay.keys()].sort();
 
-  const byAccount = groupBy(curRows as any[], (r) => r.adAccountId);
   const clientOfAccount = new Map<string, { id: string; name: string; currency: string }[]>();
   for (const a of accounts) clientOfAccount.set(a.id, a.links.map((l) => ({ id: l.client.id, name: l.client.name, currency: l.client.currency })));
-  const byClient = new Map<string, { name: string; row: ReturnType<typeof sumRows> }>();
-  for (const [accId, row] of byAccount) {
-    const cl = clientOfAccount.get(accId) ?? [];
-    // si una cuenta sirve a varios clientes no se puede atribuir por cliente sin datos de campaña: se marca como "Sin asignar"
-    const key = cl.length === 1 ? cl[0].id : "unassigned";
-    const name = cl.length === 1 ? cl[0].name : "Cuenta compartida / sin cliente";
-    const e = byClient.get(key) ?? { name, row: sumRows([]) };
-    e.row = sumRows([e.row, row]);
-    byClient.set(key, e);
+  // atribución por campaña (si se asignó) y, si no, por cuenta cuando sirve a un solo cliente
+  const assigned = await db.metaEntity.findMany({ where: { adAccountId: { in: ids }, level: "campaign", clientId: { not: null } }, select: { adAccountId: true, metaId: true, clientId: true } });
+  const campClient = new Map(assigned.map((e) => [`${e.adAccountId}:${e.metaId}`, e.clientId as string]));
+  const clientNames = new Map(accounts.flatMap((a) => a.links.map((l) => [l.client.id, l.client.name] as const)));
+  const byClientRows = new Map<string, any[]>();
+  for (const r of curRows as any[]) {
+    const cl = clientOfAccount.get(r.adAccountId) ?? [];
+    const key = campClient.get(`${r.adAccountId}:${r.campaignId}`) ?? (cl.length === 1 ? cl[0].id : "unassigned");
+    byClientRows.set(key, [...(byClientRows.get(key) ?? []), r]);
   }
+  const byClient = new Map<string, { name: string; row: ReturnType<typeof sumRows> }>();
+  for (const [key, rows] of byClientRows) {
+    byClient.set(key, { name: key === "unassigned" ? "Sin asignar (campañas sin cliente)" : clientNames.get(key) ?? "Cliente", row: sumRows(rows) });
+  }
+  const byAccount = groupBy(curRows as any[], (r) => r.adAccountId);
   const perf = ids.length ? await adPerformance(ids, cur.from, cur.to) : [];
   const { winners, losers } = classify(perf);
   const hasData = curRows.length > 0;

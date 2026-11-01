@@ -1,12 +1,13 @@
 import { adPerformance } from "./insights";
+import type { CampaignScope } from "./kpis";
 
 function esc(v: unknown) {
   const s = String(v ?? "");
   return /[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
 }
 
-export async function reportCsv(accountIds: string[], from: Date, to: Date) {
-  const perf = await adPerformance(accountIds, from, to);
+export async function reportCsv(accountIds: string[], from: Date, to: Date, scope?: CampaignScope) {
+  const perf = await adPerformance(accountIds, from, to, scope);
   const head = ["anuncio", "estado", "gasto", "impresiones", "alcance_aprox", "clics", "ctr_%", "cpc", "cpm", "conversaciones", "leads", "compras", "cpa", "roas", "frecuencia"];
   const lines = [head.join(",")];
   for (const p of perf) {

@@ -68,6 +68,9 @@ export function periodFromDays(days: number): { cur: Period; prev: Period } {
   return { cur: { from, to }, prev: { from: prevFrom, to: prevTo } };
 }
 
+/** Restricción por campaña: cuenta -> campañas atribuidas al cliente (solo en cuentas compartidas). */
+export type CampaignScope = Record<string, string[]>;
+
 /** adAccountIds permitidos: siempre derivados de la organización de la sesión */
 export async function orgAccountIds(orgId: string, clientId?: string): Promise<string[]> {
   if (clientId) {
@@ -78,9 +81,40 @@ export async function orgAccountIds(orgId: string, clientId?: string): Promise<s
   return accs.map((a) => a.id);
 }
 
-export async function fetchRows(accountIds: string[], p: Period) {
+/**
+ * Alcance de un cliente: sus cuentas y, si una cuenta la comparten varios clientes,
+ * solo las campañas que se le asignaron. Una cuenta compartida sin campañas asignadas no aporta datos
+ * (no se atribuye por adivinación).
+ */
+export async function clientScope(orgId: string, clientId: string): Promise<{ accountIds: string[]; scope: CampaignScope }> {
+  const links = await db.clientMetaLink.findMany({ where: { clientId, client: { orgId } } });
+  const accountIds = links.map((l) => l.adAccountId);
+  const scope: CampaignScope = {};
+  for (const accId of accountIds) {
+    const others = await db.clientMetaLink.count({ where: { adAccountId: accId, clientId: { not: clientId } } });
+    if (others > 0) {
+      const camps = await db.metaEntity.findMany({ where: { adAccountId: accId, level: "campaign", clientId }, select: { metaId: true } });
+      scope[accId] = camps.map((c) => c.metaId);
+    }
+  }
+  return { accountIds, scope };
+}
+
+export async function fetchRows(accountIds: string[], p: Period, scope?: CampaignScope) {
   if (!accountIds.length) return [];
-  return db.insightSnapshot.findMany({ where: { adAccountId: { in: accountIds }, date: { gte: p.from, lte: p.to } } });
+  const date = { gte: p.from, lte: p.to };
+  const restricted = scope ? Object.keys(scope).filter((a) => accountIds.includes(a)) : [];
+  if (!restricted.length) return db.insightSnapshot.findMany({ where: { adAccountId: { in: accountIds }, date } });
+  const free = accountIds.filter((a) => !restricted.includes(a));
+  return db.insightSnapshot.findMany({
+    where: {
+      date,
+      OR: [
+        ...(free.length ? [{ adAccountId: { in: free } }] : []),
+        ...restricted.map((a) => ({ adAccountId: a, campaignId: { in: scope![a] } })),
+      ],
+    },
+  });
 }
 
 export function sumRows(rows: Row[]): Row {

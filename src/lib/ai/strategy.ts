@@ -1,7 +1,7 @@
 import { db } from "../db";
 import { generateText, parseJson } from "./providers";
 import { adPerformance, classify } from "../analytics/insights";
-import { orgAccountIds } from "../analytics/kpis";
+import { clientScope } from "../analytics/kpis";
 
 export const POLICY_NOTE = `Cumple las políticas de publicidad de Meta vigentes: sin afirmaciones engañosas, sin atributos personales ("tú tienes..."), sin promesas garantizadas, sin antes/después irreales; categorías especiales (crédito, empleo, vivienda, temas sociales/política) requieren declaración y restricciones de segmentación. No inventes datos de rendimiento.`;
 
@@ -18,13 +18,13 @@ export type StrategyOutput = {
 /** Estrategia basada en datos reales de la cuenta si existen; si no, lo declara explícitamente. */
 export async function buildStrategy(orgId: string, clientId: string, objective: string, brief: string, totalBudget?: number) {
   const client = await db.client.findFirstOrThrow({ where: { id: clientId, orgId }, include: { products: true } });
-  const accountIds = await orgAccountIds(orgId, clientId);
+  const { accountIds, scope } = await clientScope(orgId, clientId);
   let dataBlock = "SIN DATOS REALES DE META para este cliente (no hay cuenta vinculada/sincronizada). No inventes métricas; basa la estrategia en el brief y marca las suposiciones en needsData.";
   let basedOnData = false;
   if (accountIds.length) {
     const to = new Date();
     to.setUTCHours(0, 0, 0, 0);
-    const perf = await adPerformance(accountIds, new Date(to.getTime() - 29 * 86400000), to);
+    const perf = await adPerformance(accountIds, new Date(to.getTime() - 29 * 86400000), to, scope);
     if (perf.length) {
       basedOnData = true;
       const c = classify(perf);

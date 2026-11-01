@@ -2,7 +2,7 @@ import Link from "next/link";
 import { db } from "@/lib/db";
 import { requireSession } from "@/lib/auth";
 import { delta, int, money, pct, nf2, ratio } from "@/lib/format";
-import { orgAccountIds, periodFromDays } from "@/lib/analytics/kpis";
+import { orgAccountIds, clientScope, periodFromDays, CampaignScope } from "@/lib/analytics/kpis";
 import { adPerformance, classify, fatigue } from "@/lib/analytics/insights";
 import { Empty, PageHeader, Pending } from "@/components/ui";
 
@@ -12,9 +12,15 @@ export default async function AnalyticsPage({ searchParams }: { searchParams: Pr
   const days = [7, 14, 30, 90].includes(Number(sp.days)) ? Number(sp.days) : 30;
   const clients = await db.client.findMany({ where: { orgId: s.orgId }, orderBy: { name: "asc" } });
   const clientId = clients.find((c) => c.id === sp.client)?.id;
-  const ids = await orgAccountIds(s.orgId, clientId);
+  let ids: string[];
+  let scope: CampaignScope | undefined;
+  if (clientId) {
+    const cs = await clientScope(s.orgId, clientId);
+    ids = cs.accountIds;
+    scope = cs.scope;
+  } else ids = await orgAccountIds(s.orgId);
   const { cur, prev } = periodFromDays(days);
-  const [perf, prevPerf, fat] = ids.length ? await Promise.all([adPerformance(ids, cur.from, cur.to), adPerformance(ids, prev.from, prev.to), fatigue(ids)]) : [[], [], []];
+  const [perf, prevPerf, fat] = ids.length ? await Promise.all([adPerformance(ids, cur.from, cur.to, scope), adPerformance(ids, prev.from, prev.to, scope), fatigue(ids, scope)]) : [[], [], []];
   const prevMap = new Map(prevPerf.map((p) => [p.adId, p]));
   const { winners, losers, noResults, medianCpa } = classify(perf);
   const winSet = new Set(winners.map((w) => w.adId));

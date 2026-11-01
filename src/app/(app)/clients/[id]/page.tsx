@@ -131,6 +131,28 @@ async function unlink(f: FormData) {
   back(`/clients/${clientId}`, "ok", "Vínculo eliminado.");
 }
 
+async function assignCampaigns(f: FormData) {
+  "use server";
+  const s = await writer();
+  const clientId = str(f, "id");
+  await own(s.orgId, clientId);
+  const links = await db.clientMetaLink.findMany({ where: { clientId } });
+  const accIds = links.map((l) => l.adAccountId);
+  const picked = new Set(f.getAll("camp").map(String));
+  const camps = await db.metaEntity.findMany({ where: { adAccountId: { in: accIds }, level: "campaign" } });
+  let n = 0;
+  for (const c of camps) {
+    const on = picked.has(c.id);
+    if (on && (c.clientId == null || c.clientId === clientId)) {
+      if (c.clientId !== clientId) { await db.metaEntity.update({ where: { id: c.id }, data: { clientId } }); n++; }
+    } else if (!on && c.clientId === clientId) {
+      await db.metaEntity.update({ where: { id: c.id }, data: { clientId: null } });
+    }
+  }
+  await audit(s, "client.assign_campaigns", clientId, { assigned: picked.size });
+  back(`/clients/${clientId}`, "ok", "Campañas actualizadas.");
+}
+
 async function deleteClient(f: FormData) {
   "use server";
   const s = await writer();
@@ -158,6 +180,9 @@ export default async function ClientPage({ params, searchParams }: { params: Pro
   });
   if (!c) notFound();
   const accounts = await db.metaAdAccount.findMany({ where: { connection: { orgId: s.orgId } }, orderBy: { name: "asc" } });
+  const linkedIds = c.links.map((l) => l.adAccountId);
+  const campaigns = linkedIds.length ? await db.metaEntity.findMany({ where: { adAccountId: { in: linkedIds }, level: "campaign" }, include: { adAccount: true }, orderBy: { name: "asc" } }) : [];
+  const otherClients = new Map((await db.client.findMany({ where: { orgId: s.orgId }, select: { id: true, name: true } })).map((x) => [x.id, x.name]));
 
   return (
     <div className="space-y-6">
@@ -262,6 +287,29 @@ export default async function ClientPage({ params, searchParams }: { params: Pro
             <form action={unlink}><input type="hidden" name="id" value={c.id} /><input type="hidden" name="linkId" value={l.id} /><button className="text-xs text-red-300 hover:underline">Desvincular</button></form>
           </div>
         ))}
+      </section>
+
+      <section className="card space-y-3">
+        <h2 className="font-semibold text-white">Campañas de este cliente</h2>
+        <p className="text-sm text-zinc-400">Si varios clientes usan la misma cuenta publicitaria, marca aquí cuáles campañas son de este cliente. Con eso Analítica, informes y Dashboard separan los resultados por cliente. Las campañas sin asignar no se atribuyen a nadie.</p>
+        {c.links.length === 0 ? <Empty>Primero vincula una cuenta publicitaria.</Empty> : campaigns.length === 0 ? <Empty>No hay campañas sincronizadas. Sincroniza la cuenta en Conexiones.</Empty> : (
+          <form action={assignCampaigns} className="space-y-2">
+            <input type="hidden" name="id" value={c.id} />
+            <ul className="divide-y divide-white/5">
+              {campaigns.map((k) => {
+                const other = k.clientId && k.clientId !== c.id ? otherClients.get(k.clientId) : null;
+                return (
+                  <li key={k.id} className="flex items-center gap-3 py-2 text-sm">
+                    <input type="checkbox" name="camp" value={k.id} defaultChecked={k.clientId === c.id} disabled={!!other} />
+                    <span className="min-w-0 flex-1 truncate text-white">{k.name}</span>
+                    <span className="text-xs text-zinc-500">{k.adAccount.name}{other ? ` · asignada a ${other}` : ""}</span>
+                  </li>
+                );
+              })}
+            </ul>
+            <button className="btn">Guardar campañas</button>
+          </form>
+        )}
       </section>
 
       <section className="card space-y-2">

@@ -181,10 +181,12 @@ model MetaEntity {
   dailyBudget Float?        // unidades mayores de moneda
   lifetimeBudget Float?
   raw         Json?
+  clientId    String?       // solo nivel campaign: cliente al que se atribuye la campaña
   syncedAt    DateTime      @default(now())
 
   @@unique([adAccountId, level, metaId])
   @@index([adAccountId, level])
+  @@index([clientId])
 }
 
 model InsightSnapshot {
