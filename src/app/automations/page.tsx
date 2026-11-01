@@ -1,0 +1,2 @@
+import {Shell} from "@/components/shell";import {prisma} from "@/lib/prisma";import {AutomationsUI} from "./ui";
+export default async function Automations(){const [rules,clients]=await Promise.all([prisma.automationRule.findMany({include:{client:true}}),prisma.client.findMany({select:{id:true,name:true}})]);return <Shell><div className="page"><div className="eyebrow">Control operativo</div><h1 className="title">Automatizaciones</h1><AutomationsUI rules={rules.map(r=>({id:r.id,name:r.name,client:r.client.name,enabled:r.enabled}))} clients={clients}/></div></Shell>}
