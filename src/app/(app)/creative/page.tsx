@@ -4,7 +4,8 @@ import { requireSession } from "@/lib/auth";
 import { audit } from "@/lib/audit";
 import { back, str, writer } from "@/lib/actions-util";
 import { composeCreative, FORMATS } from "@/lib/creative/compose";
-import { backgroundPrompt, scenePrompt } from "@/lib/creative/prompts";
+import { backgroundPrompt, externalPrompt, scenePrompt } from "@/lib/creative/prompts";
+import { CopyButton } from "@/components/copy-button";
 import { generateImage } from "@/lib/ai/providers";
 import { generateCopy } from "@/lib/ai/copy";
 import { Empty, Notice, PageHeader, Pending } from "@/components/ui";
@@ -148,13 +149,19 @@ async function del(f: FormData) {
   back(`/creative?client=${c!.clientId}`, "ok", "Eliminada.");
 }
 
-export default async function CreativePage({ searchParams }: { searchParams: Promise<{ client?: string; ok?: string; error?: string }> }) {
+export default async function CreativePage({ searchParams }: { searchParams: Promise<{ client?: string; ok?: string; error?: string; pscene?: string; pformat?: string; pmode?: string; ptitle?: string; pprice?: string; pbadges?: string }> }) {
   const s = await requireSession();
   const sp = await searchParams;
   const clients = await db.client.findMany({ where: { orgId: s.orgId }, orderBy: { name: "asc" } });
   const client = clients.find((c) => c.id === sp.client) ?? null;
   const originals = client ? await db.asset.findMany({ where: { clientId: client.id, kind: "original" }, select: { id: true, name: true } }) : [];
   const creatives = client ? await db.creative.findMany({ where: { clientId: client.id }, orderBy: { createdAt: "desc" }, take: 60 }) : [];
+
+  const pscene = (sp.pscene ?? "").trim();
+  const pformat = sp.pformat && sp.pformat in FORMATS ? sp.pformat : "1:1";
+  const pmode = sp.pmode === "ai_background" ? "ai_background" : "ai_scene";
+  const promptText = client && pscene ? externalPrompt({ mode: pmode, scene: pscene, format: pformat, brand: client.name, colors: client.brandColors, industry: client.industry ?? undefined }) : "";
+  const overlay = [sp.ptitle && `Título: ${sp.ptitle}`, sp.pprice && `Precio: ${sp.pprice}`, sp.pbadges && `Badges: ${sp.pbadges}`].filter(Boolean) as string[];
 
   return (
     <div className="space-y-6">
@@ -193,6 +200,31 @@ export default async function CreativePage({ searchParams }: { searchParams: Pro
             <div className="flex items-end sm:col-span-2 lg:col-span-4"><button className="btn" disabled={originals.length === 0}>Generar</button>
               <span className="ml-3 text-xs text-zinc-500">Los modos con IA consumen crédito del proveedor configurado.</span></div>
           </form>
+
+          <section className="card space-y-3">
+            <h2 className="font-semibold text-white">Solo prompt (sin gastar créditos)</h2>
+            <p className="text-sm text-zinc-400">Arma el prompt con las reglas de fidelidad del producto, cópialo y pégalo en ChatGPT adjuntando la foto original. No usa ninguna API ni consume saldo.</p>
+            <form method="get" className="grid gap-3 sm:grid-cols-4">
+              <input type="hidden" name="client" value={client.id} />
+              <div className="sm:col-span-4"><label className="label">Escena / fondo</label><input name="pscene" defaultValue={pscene} className="input" placeholder="dormitorio moderno, luz cálida de tarde" required /></div>
+              <div><label className="label">Tipo</label>
+                <select name="pmode" defaultValue={pmode} className="input"><option value="ai_scene">Escena con mi producto (adjuntas la foto)</option><option value="ai_background">Solo fondo vacío</option></select></div>
+              <div><label className="label">Formato</label>
+                <select name="pformat" defaultValue={pformat} className="input">{Object.keys(FORMATS).map((k) => <option key={k}>{k}</option>)}</select></div>
+              <div><label className="label">Título (para después)</label><input name="ptitle" defaultValue={sp.ptitle ?? ""} className="input" maxLength={60} /></div>
+              <div><label className="label">Precio (para después)</label><input name="pprice" defaultValue={sp.pprice ?? ""} className="input" /></div>
+              <div className="sm:col-span-4"><button className="btn-ghost">Armar prompt</button></div>
+            </form>
+            {promptText && (
+              <div className="space-y-2">
+                <textarea readOnly value={promptText} rows={8} className="input w-full" />
+                <div className="flex flex-wrap items-center gap-3"><CopyButton text={promptText} />
+                  <span className="text-xs text-zinc-500">Pégalo en ChatGPT {pmode === "ai_scene" ? "y adjunta la foto original del producto" : ""}.</span></div>
+                {overlay.length > 0 && <p className="text-xs text-zinc-400">Texto para añadir después (Canva u otro editor, no lo pidas a la IA): {overlay.join(" · ")}</p>}
+                {pmode === "ai_scene" && <p className="text-xs text-amber-300">Revisa que el producto generado sea idéntico al real antes de usarlo en un anuncio.</p>}
+              </div>
+            )}
+          </section>
 
           <section className="space-y-3">
             <h2 className="font-semibold text-white">Biblioteca de {client.name}</h2>
