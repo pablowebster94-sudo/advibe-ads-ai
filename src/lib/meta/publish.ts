@@ -1,7 +1,7 @@
 import { db } from "../db";
 import { credsFor } from "./connect";
 import { MetaCreds, MetaError, gpost } from "./graph";
-import { createLeadForm } from "./leadforms";
+import { createLeadForm, leadgenTosAccepted } from "./leadforms";
 import {
   LeadFormConfig,
   TargetingInput,
@@ -9,7 +9,9 @@ import {
   callToAction,
   destinationAdsetParams,
   hasLocation,
-  isRestricted,
+  LEAD_AD_LINK,
+  locationOverlaps,
+  normalizeCategories,
   validateLeadForm,
 } from "./spec";
 
@@ -49,7 +51,8 @@ export async function validateDraft(draftId: string): Promise<string[]> {
   if (!d.pageId) issues.push("Selecciona la página de Facebook.");
   if (d.destination === "WHATSAPP" && !d.pageId) issues.push("WhatsApp requiere página.");
   if (d.destination === "FORM" && d.objective !== "OUTCOME_LEADS") issues.push("Los formularios instantáneos requieren el objetivo Clientes potenciales (OUTCOME_LEADS).");
-  if (isRestricted(d.specialAdCategories) && !specialCountries(d).length) issues.push("Con categoría especial, Meta exige indicar el país del anuncio (usa países o ubicaciones de un solo país).");
+  if (d.specialAdCategories.length && !specialCountries(d).length) issues.push("Con categoría especial, Meta exige indicar el país del anuncio (special_ad_category_country): agrega ubicaciones validadas.");
+  if (d.specialAdCategories.includes("CREDIT")) issues.push("La categoría Crédito fue reemplazada por Productos y servicios financieros: vuelve a guardar la configuración.");
   if (d.dailyBudget <= 0) issues.push("El presupuesto debe ser mayor que 0.");
   const adsets = (d.adsets as unknown as DraftAdset[]) || [];
   if (!adsets.length) issues.push("Agrega al menos un conjunto de anuncios.");
@@ -60,7 +63,14 @@ export async function validateDraft(draftId: string): Promise<string[]> {
       if (d.destination === "WEBSITE" && !a.link) issues.push(`El anuncio "${a.name}" requiere URL de destino.`);
     }
     if (!hasLocation(s.targeting || {})) issues.push(`El conjunto "${s.name}" requiere ubicación.`);
+    for (const x of locationOverlaps(s.targeting || {})) issues.push(`Conjunto "${s.name}": ${x}`);
     if (d.destination === "FORM") for (const x of validateLeadForm(s.leadForm)) issues.push(`Conjunto "${s.name}": ${x}`);
+  }
+  if (d.destination === "FORM" && d.adAccountId && d.pageId) {
+    // Solo bloquea si Meta confirma que no se aceptaron; si no se puede leer, el error real saldrá al publicar.
+    if ((await leadgenTosAccepted(d.adAccountId, d.pageId)) === false) {
+      issues.push("La página no ha aceptado los Términos de anuncios para clientes potenciales de Meta (facebook.com/ads/leadgen/tos).");
+    }
   }
   if (d.adAccountId) {
     const acc = await db.metaAdAccount.findUnique({ where: { id: d.adAccountId } });
@@ -96,8 +106,9 @@ export async function publishDraft(draftId: string) {
         name: d.name,
         objective: d.objective,
         status: "PAUSED",
-        special_ad_categories: d.specialAdCategories.length ? d.specialAdCategories : [],
-        ...(isRestricted(d.specialAdCategories) ? { special_ad_category_country: specialCountries(d) } : {}),
+        special_ad_categories: normalizeCategories(d.specialAdCategories),
+        // Meta exige el país siempre que haya una categoría especial.
+        ...(d.specialAdCategories.length ? { special_ad_category_country: specialCountries(d) } : {}),
         buying_type: "AUCTION",
         is_adset_budget_sharing_enabled: false,
       });
@@ -145,7 +156,7 @@ export async function publishDraft(draftId: string) {
           d.destination === "WHATSAPP"
             ? "https://api.whatsapp.com/send"
             : d.destination === "FORM"
-              ? a.link || `https://www.facebook.com/${d.pageId}`
+              ? LEAD_AD_LINK
               : a.link || "";
         const spec: Record<string, unknown> = {
           page_id: d.pageId,

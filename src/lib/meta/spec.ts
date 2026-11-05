@@ -3,12 +3,12 @@
  * unit-tested: targeting (geo + special ad categories) and Instant Forms.
  */
 
-export type GeoPick = { key: string; name: string; country_code?: string; radius?: number; distance_unit?: "kilometer" | "mile" };
+export type GeoPick = { key: string; name: string; country_code?: string; region_key?: string; radius?: number; distance_unit?: "kilometer" | "mile" };
 
 export type TargetingInput = {
   countries?: string[];
   regions?: GeoPick[];
-  cities?: { key: string; name?: string; country_code?: string; radius?: number; distance_unit?: string }[];
+  cities?: { key: string; name?: string; country_code?: string; region_key?: string; radius?: number; distance_unit?: string }[];
   ageMin?: number;
   ageMax?: number;
   genders?: number[];
@@ -18,10 +18,25 @@ export type TargetingInput = {
   placements?: "advantage" | { publisher_platforms: string[]; facebook_positions?: string[]; instagram_positions?: string[] };
 };
 
-/** Special ad categories that restrict targeting (Meta: employment, housing, credit). */
-export const RESTRICTED_CATEGORIES = ["EMPLOYMENT", "HOUSING", "CREDIT"];
+/**
+ * Special ad categories with targeting restrictions. Meta replaced CREDIT with
+ * FINANCIAL_PRODUCTS_SERVICES (Jan 2025); CREDIT stays here only so older
+ * drafts are still treated as restricted.
+ */
+export const RESTRICTED_CATEGORIES = ["EMPLOYMENT", "HOUSING", "FINANCIAL_PRODUCTS_SERVICES", "CREDIT"];
+export const SPECIAL_CATEGORIES = [
+  ["EMPLOYMENT", "Empleo"],
+  ["HOUSING", "Vivienda"],
+  ["FINANCIAL_PRODUCTS_SERVICES", "Productos y servicios financieros"],
+  ["ISSUES_ELECTIONS_POLITICS", "Temas sociales, elecciones o política"],
+] as const;
 
-/** Minimum radius Meta accepts around a city for special ad categories (15 mi ≈ 24.1 km). */
+/** Old value kept by Meta as input alias; send the current one. */
+export function normalizeCategories(categories: string[] = []) {
+  return categories.map((c) => (c === "CREDIT" ? "FINANCIAL_PRODUCTS_SERVICES" : c));
+}
+
+/** Minimum radius around a city for special ad categories (Meta: 15 mi / 25 km in US-CA, 15 km in Europe). */
 export const SPECIAL_MIN_RADIUS_KM = 25;
 
 export function isRestricted(categories: string[] = []) {
@@ -57,7 +72,8 @@ export function buildTargeting(t: TargetingInput, specialCategories: string[] = 
     age_min: restricted ? 18 : t.ageMin ?? 18,
     age_max: restricted ? 65 : t.ageMax ?? 65,
   };
-  if (!restricted) out.targeting_automation = { advantage_audience: 0 };
+  // Advantage+ audience off: respects the chosen audience and is not available with special categories.
+  out.targeting_automation = { advantage_audience: 0 };
   if (!restricted && t.genders?.length) out.genders = t.genders;
   if (t.interests?.length) out.flexible_spec = [{ interests: t.interests.map((i) => ({ id: i.id, name: i.name })) }];
   if (t.customAudiences?.length) out.custom_audiences = t.customAudiences;
@@ -78,20 +94,33 @@ export function restrictionNotes(t: TargetingInput, specialCategories: string[] 
   return notes;
 }
 
+/** Meta rejects overlapping locations (e.g. Cuenca inside Azuay, or Azuay plus all of Ecuador). */
+export function locationOverlaps(t: TargetingInput): string[] {
+  const issues: string[] = [];
+  const countries = new Set(t.countries ?? []);
+  const regionKeys = new Set((t.regions ?? []).map((r) => r.key));
+  for (const r of t.regions ?? []) {
+    if (r.country_code && countries.has(r.country_code)) issues.push(`La provincia ${r.name} ya está incluida en el país ${r.country_code}.`);
+  }
+  for (const c of t.cities ?? []) {
+    if (c.country_code && countries.has(c.country_code)) issues.push(`La ciudad ${c.name ?? c.key} ya está incluida en el país ${c.country_code}.`);
+    if (c.region_key && regionKeys.has(c.region_key)) issues.push(`La ciudad ${c.name ?? c.key} ya está dentro de una provincia seleccionada.`);
+  }
+  return issues;
+}
+
 export function hasLocation(t: TargetingInput) {
   return Boolean(t.countries?.length || t.regions?.length || t.cities?.length);
 }
 
 /* ─────────────────────────── Instant Forms ─────────────────────────── */
 
+/** Only question types confirmed in Meta's leadgen_forms reference. */
 export const STANDARD_FIELDS = {
   FULL_NAME: "Nombre completo",
   EMAIL: "Correo electrónico",
   PHONE: "Teléfono",
   CITY: "Ciudad",
-  PROVINCE: "Provincia",
-  DOB: "Fecha de nacimiento",
-  GENDER: "Género",
 } as const;
 export type StandardField = keyof typeof STANDARD_FIELDS;
 
@@ -123,6 +152,7 @@ export function validateLeadForm(f: LeadFormConfig | undefined): string[] {
   if (!f.fields?.length && !f.customQuestions?.length) issues.push("El formulario necesita al menos una pregunta.");
   if (!URL_RE.test(f.privacyUrl || "")) issues.push("La política de privacidad debe ser una URL https válida (Meta la exige).");
   if (!f.thankYou?.title?.trim() || !f.thankYou?.body?.trim()) issues.push("Completa título y texto de la pantalla de agradecimiento.");
+  if ((f.privacyLinkText ?? "").length > 70) issues.push("El texto del enlace de privacidad no puede pasar de 70 caracteres.");
   if (f.thankYou?.websiteUrl && !URL_RE.test(f.thankYou.websiteUrl)) issues.push("La URL del botón de agradecimiento no es válida.");
   if (!f.thankYou?.websiteUrl) issues.push("La pantalla de agradecimiento necesita una URL para su botón.");
   f.customQuestions?.forEach((q, i) => {
@@ -146,9 +176,9 @@ export function buildLeadFormPayload(f: LeadFormConfig) {
   });
   const payload: Record<string, unknown> = {
     name: f.name,
-    locale: f.locale || "es_LA",
+    ...(f.locale ? { locale: f.locale } : {}),
     questions,
-    privacy_policy: { url: f.privacyUrl, link_text: f.privacyLinkText || "Política de privacidad" },
+    privacy_policy: { url: f.privacyUrl, link_text: (f.privacyLinkText || "Política de privacidad").slice(0, 70) },
     thank_you_page: {
       title: f.thankYou.title,
       body: f.thankYou.body,
@@ -187,11 +217,17 @@ export function destinationAdsetParams(destination: string) {
   }
 }
 
+/** CTA types Meta accepts on lead ads. */
+export const LEAD_CTAS = ["SIGN_UP", "APPLY_NOW", "LEARN_MORE", "GET_QUOTE", "SUBSCRIBE", "DOWNLOAD"];
+
+/** Lead ads must use Meta's placeholder link (the form opens instead). */
+export const LEAD_AD_LINK = "https://fb.me/";
+
 /** Creative call to action per destination. */
 export function callToAction(destination: string, opts: { cta?: string; link?: string; formId?: string }) {
   if (destination === "WHATSAPP") return { type: "WHATSAPP_MESSAGE", value: { app_destination: "WHATSAPP" } };
   if (destination === "FORM") {
-    const type = ["SIGN_UP", "APPLY_NOW", "LEARN_MORE", "GET_QUOTE", "SUBSCRIBE", "CONTACT_US"].includes(opts.cta || "") ? opts.cta : "SIGN_UP";
+    const type = LEAD_CTAS.includes(opts.cta || "") ? opts.cta : "SIGN_UP";
     return { type, value: { lead_gen_form_id: opts.formId } };
   }
   return { type: opts.cta || "LEARN_MORE", value: { link: opts.link } };

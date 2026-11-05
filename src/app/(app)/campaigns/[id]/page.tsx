@@ -8,7 +8,7 @@ import { money } from "@/lib/format";
 import { DraftAdset, PublishBlocked, publishDraft, validateDraft } from "@/lib/meta/publish";
 import { searchGeo, searchInterests } from "@/lib/meta/targeting";
 import { listLeadForms, type ExistingForm } from "@/lib/meta/leadforms";
-import { STANDARD_FIELDS, restrictionNotes, type LeadFormConfig, type StandardField } from "@/lib/meta/spec";
+import { LEAD_CTAS, SPECIAL_CATEGORIES, STANDARD_FIELDS, restrictionNotes, type LeadFormConfig, type StandardField } from "@/lib/meta/spec";
 import { Notice, PageHeader, StatusBadge } from "@/components/ui";
 
 export const maxDuration = 120;
@@ -64,7 +64,7 @@ async function addAdset(f: FormData) {
     ...(wholeCountry ? [geoCountry] : []),
   ].filter((x, i, a) => a.indexOf(x) === i);
   const interests: { id: string; name: string }[] = [];
-  const cities: { key: string; name: string; country_code?: string; radius: number; distance_unit: string }[] = [];
+  const cities: { key: string; name: string; country_code?: string; region_key?: string; radius: number; distance_unit: string }[] = [];
   const regions: { key: string; name: string; country_code?: string }[] = [];
   const unresolved: string[] = [];
   const needMeta = interestTerms.length || cityTerms.length || regionTerms.length;
@@ -84,7 +84,7 @@ async function addAdset(f: FormData) {
     }
     for (const t of cityTerms) {
       const hit = (await searchGeo(d.adAccountId!, t, { types: ["city"], countryCode: geoCountry }))[0];
-      if (hit) cities.push({ key: hit.key, name: `${hit.name}${hit.region ? `, ${hit.region}` : ""}`, country_code: hit.country_code ?? geoCountry, radius, distance_unit: "kilometer" });
+      if (hit) cities.push({ key: hit.key, name: `${hit.name}${hit.region ? `, ${hit.region}` : ""}`, country_code: hit.country_code ?? geoCountry, region_key: hit.region_id != null ? String(hit.region_id) : undefined, radius, distance_unit: "kilometer" });
       else unresolved.push(`${t} (ciudad)`);
     }
   } catch (e: any) {
@@ -271,7 +271,7 @@ export default async function DraftPage({ params, searchParams }: { params: Prom
         <div><label className="label">Inicio</label><input name="startTime" type="datetime-local" defaultValue={dt(d.startTime)} className="input" /></div>
         <div><label className="label">Fin</label><input name="endTime" type="datetime-local" defaultValue={dt(d.endTime)} className="input" /></div>
         <div><label className="label">Categoría especial</label>
-          <select name="special" defaultValue={d.specialAdCategories[0] ?? ""} className="input"><option value="">Ninguna</option><option value="CREDIT">Crédito</option><option value="EMPLOYMENT">Empleo</option><option value="HOUSING">Vivienda</option><option value="ISSUES_ELECTIONS_POLITICS">Temas sociales/política</option></select></div>
+          <select name="special" defaultValue={d.specialAdCategories[0] === "CREDIT" ? "FINANCIAL_PRODUCTS_SERVICES" : d.specialAdCategories[0] ?? ""} className="input"><option value="">Ninguna</option>{SPECIAL_CATEGORIES.map(([v, l]) => <option key={v} value={v}>{l}</option>)}</select></div>
         {ed && <div className="sm:col-span-3"><button className="btn">Guardar</button></div>}
       </form>
 
@@ -294,7 +294,7 @@ export default async function DraftPage({ params, searchParams }: { params: Prom
             <ul className="space-y-1">
               {a.ads.map((ad, k) => (
                 <li key={k} className="flex items-center justify-between gap-2 rounded-lg bg-white/5 px-3 py-2 text-sm">
-                  <span className="truncate">{ad.name} <span className="text-xs text-zinc-400">· {d.destination === "FORM" ? (ad.cta && ["SIGN_UP", "APPLY_NOW", "LEARN_MORE", "GET_QUOTE", "SUBSCRIBE", "CONTACT_US"].includes(ad.cta) ? ad.cta : "SIGN_UP") : ad.cta}</span></span>
+                  <span className="truncate">{ad.name} <span className="text-xs text-zinc-400">· {d.destination === "FORM" ? (ad.cta && LEAD_CTAS.includes(ad.cta) ? ad.cta : "SIGN_UP") : ad.cta}</span></span>
                   {ed && <form action={delAd}><input type="hidden" name="id" value={d.id} /><input type="hidden" name="idx" value={i} /><input type="hidden" name="adIdx" value={k} /><button className="text-xs text-red-300">Quitar</button></form>}
                 </li>
               ))}
@@ -326,7 +326,7 @@ export default async function DraftPage({ params, searchParams }: { params: Prom
             <div><label className="label">Ciudades (se buscan en Meta)</label><input name="cities" className="input" placeholder="Cuenca, Azogues" /></div>
             <div><label className="label">Radio alrededor de ciudades (km)</label><input name="radius" type="number" min={1} max={80} defaultValue={25} className="input" /></div>
             <div><label className="label">Otros países (ISO, coma)</label><input name="countries" className="input" placeholder="opcional" /></div>
-            {d.specialAdCategories.length > 0 && <div className="sm:col-span-4 text-xs text-sky-300">Categoría especial {d.specialAdCategories.join(", ")}: Meta fija edad 18-65+, todos los géneros, sin exclusiones de públicos y un radio mínimo de {25} km; algunos intereses no estarán disponibles.</div>}
+            {d.specialAdCategories.length > 0 && <div className="sm:col-span-4 text-xs text-sky-300">Categoría especial {d.specialAdCategories.join(", ")}: se aplican las restricciones de Meta (edad 18-65+, todos los géneros, sin exclusiones, radio mínimo de 25 km alrededor de ciudades; sin comportamientos, datos demográficos ni públicos similares). No combines una ciudad con la provincia que la contiene: Meta rechaza ubicaciones superpuestas.</div>}
             <div><label className="label">Edad mín.</label><input name="ageMin" type="number" min={13} max={65} defaultValue={18} className="input" /></div>
             <div><label className="label">Edad máx.</label><input name="ageMax" type="number" min={13} max={65} defaultValue={65} className="input" /></div>
             <div><label className="label">Género</label><select name="gender" className="input"><option value="">Todos</option><option value="1">Hombres</option><option value="2">Mujeres</option></select></div>

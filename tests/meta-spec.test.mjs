@@ -26,7 +26,7 @@ test("empleo: edad 18-65, todos los géneros, sin exclusiones y radio mínimo", 
   assert.ok(!("genders" in t));
   assert.ok(!("excluded_custom_audiences" in t));
   assert.equal(t.geo_locations.cities[0].radius, spec.SPECIAL_MIN_RADIUS_KM);
-  assert.ok(!("targeting_automation" in t));
+  assert.deepEqual(t.targeting_automation, { advantage_audience: 0 });
   assert.ok(spec.restrictionNotes(input, ["EMPLOYMENT"]).length >= 3);
 });
 
@@ -41,7 +41,7 @@ const form = {
 test("formulario: payload de leadgen_forms", () => {
   assert.deepEqual(spec.validateLeadForm(form), []);
   const p = spec.buildLeadFormPayload(form);
-  assert.equal(p.locale, "es_LA");
+  assert.ok(!("locale" in p), "sin locale no confirmado en la documentación");
   assert.equal(p.questions.length, 6);
   assert.deepEqual(p.questions[0], { type: "FULL_NAME" });
   assert.equal(p.questions[4].type, "CUSTOM");
@@ -66,4 +66,26 @@ test("destinos: WhatsApp y sitio web sin cambios; formulario usa ON_AD y lead_ge
   assert.deepEqual(spec.callToAction("WEBSITE", { cta: "SHOP_NOW", link: "https://a.com" }), { type: "SHOP_NOW", value: { link: "https://a.com" } });
   assert.deepEqual(spec.callToAction("FORM", { cta: "WHATSAPP_MESSAGE", formId: "77" }), { type: "SIGN_UP", value: { lead_gen_form_id: "77" } });
   assert.deepEqual(spec.callToAction("FORM", { cta: "APPLY_NOW", formId: "77" }), { type: "APPLY_NOW", value: { lead_gen_form_id: "77" } });
+});
+
+test("ubicaciones superpuestas se detectan antes de enviar a Meta", () => {
+  const overlap = spec.locationOverlaps({
+    countries: ["EC"],
+    regions: [{ key: "1234", name: "Azuay", country_code: "EC" }],
+    cities: [{ key: "999", name: "Cuenca", country_code: "EC", region_key: "1234" }],
+  });
+  assert.equal(overlap.length, 3);
+  assert.deepEqual(spec.locationOverlaps({ regions: [{ key: "1234", name: "Azuay", country_code: "EC" }, { key: "1235", name: "Cañar", country_code: "EC" }] }), []);
+});
+
+test("categorías: CREDIT se envía como FINANCIAL_PRODUCTS_SERVICES y sigue restringida", () => {
+  assert.deepEqual(spec.normalizeCategories(["CREDIT", "EMPLOYMENT"]), ["FINANCIAL_PRODUCTS_SERVICES", "EMPLOYMENT"]);
+  assert.ok(spec.isRestricted(["FINANCIAL_PRODUCTS_SERVICES"]));
+  assert.ok(!spec.isRestricted(["ISSUES_ELECTIONS_POLITICS"]));
+});
+
+test("anuncio de formulario: CTA permitida y enlace fb.me", () => {
+  assert.equal(spec.LEAD_AD_LINK, "https://fb.me/");
+  assert.equal(spec.callToAction("FORM", { cta: "CONTACT_US", formId: "1" }).type, "SIGN_UP");
+  assert.equal(spec.callToAction("FORM", { cta: "DOWNLOAD", formId: "1" }).type, "DOWNLOAD");
 });
