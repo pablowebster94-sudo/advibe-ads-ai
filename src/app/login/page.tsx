@@ -4,7 +4,11 @@ import { createSession, login } from "@/lib/auth";
 async function doLogin(formData: FormData) {
   "use server";
   const s = await login(String(formData.get("email") || ""), String(formData.get("password") || ""));
-  if (!s) redirect("/login?error=1");
+  if (!s) {
+    // Retraso fijo ante fallos: frena ataques de fuerza bruta sin afectar el uso normal.
+    await new Promise((r) => setTimeout(r, 1000));
+    redirect("/login?error=1");
+  }
   await createSession(s);
   redirect("/dashboard");
 }
@@ -27,7 +31,7 @@ export default async function LoginPage({ searchParams }: { searchParams: Promis
           <label className="label" htmlFor="password">Contraseña</label>
           <input id="password" name="password" type="password" required className="input" autoComplete="current-password" />
         </div>
-        {error && <p className="text-sm text-red-400">Credenciales incorrectas.</p>}
+        {error && <p className="text-sm text-red-400">Credenciales incorrectas. Tras 5 intentos fallidos el acceso se bloquea 15 minutos.</p>}
         <button className="btn w-full" type="submit">Entrar</button>
       </form>
     </main>
