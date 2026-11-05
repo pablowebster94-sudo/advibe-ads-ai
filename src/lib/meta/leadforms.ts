@@ -31,7 +31,7 @@ export async function listLeadForms(adAccountId: string, pageId: string): Promis
 /** Creates the form on the Page and returns its id. Forms can't be edited after creation in Meta. */
 export async function createLeadForm(adAccountId: string, pageId: string, config: LeadFormConfig): Promise<string> {
   const creds = await pageCreds(adAccountId, pageId);
-  const res = await gpost<{ id: string }>(`${pageId}/leadgen_forms`, creds, buildLeadFormPayload(config));
+  const res = await gpost<{ id: string }>(`${pageId}/leadgen_forms`, creds, buildLeadFormPayload(config) as Parameters<typeof gpost>[2]);
   if (!res.id) throw new Error("Meta no devolvió el id del formulario.");
   return res.id;
 }
