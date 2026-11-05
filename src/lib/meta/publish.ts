@@ -1,6 +1,17 @@
 import { db } from "../db";
 import { credsFor } from "./connect";
 import { MetaCreds, MetaError, gpost } from "./graph";
+import { createLeadForm } from "./leadforms";
+import {
+  LeadFormConfig,
+  TargetingInput,
+  buildTargeting,
+  callToAction,
+  destinationAdsetParams,
+  hasLocation,
+  isRestricted,
+  validateLeadForm,
+} from "./spec";
 
 export type DraftAd = {
   name: string;
@@ -14,17 +25,9 @@ export type DraftAd = {
 export type DraftAdset = {
   name: string;
   dailyBudget?: number;
-  targeting: {
-    countries?: string[];
-    cities?: { key: string; radius?: number; distance_unit?: string }[];
-    ageMin?: number;
-    ageMax?: number;
-    genders?: number[]; // 1 hombres, 2 mujeres
-    interests?: { id: string; name: string }[];
-    customAudiences?: { id: string }[];
-    excludedCustomAudiences?: { id: string }[];
-    placements?: "advantage" | { publisher_platforms: string[]; facebook_positions?: string[]; instagram_positions?: string[] };
-  };
+  targeting: TargetingInput;
+  /** Formulario instantáneo (solo destino FORM). */
+  leadForm?: LeadFormConfig;
   ads: DraftAd[];
 };
 
@@ -45,6 +48,8 @@ export async function validateDraft(draftId: string): Promise<string[]> {
   if (!d.adAccountId) issues.push("Selecciona la cuenta publicitaria.");
   if (!d.pageId) issues.push("Selecciona la página de Facebook.");
   if (d.destination === "WHATSAPP" && !d.pageId) issues.push("WhatsApp requiere página.");
+  if (d.destination === "FORM" && d.objective !== "OUTCOME_LEADS") issues.push("Los formularios instantáneos requieren el objetivo Clientes potenciales (OUTCOME_LEADS).");
+  if (isRestricted(d.specialAdCategories) && !specialCountries(d).length) issues.push("Con categoría especial, Meta exige indicar el país del anuncio (usa países o ubicaciones de un solo país).");
   if (d.dailyBudget <= 0) issues.push("El presupuesto debe ser mayor que 0.");
   const adsets = (d.adsets as unknown as DraftAdset[]) || [];
   if (!adsets.length) issues.push("Agrega al menos un conjunto de anuncios.");
@@ -54,7 +59,8 @@ export async function validateDraft(draftId: string): Promise<string[]> {
       if (!a.creativeId) issues.push(`El anuncio "${a.name}" no tiene creatividad.`);
       if (d.destination === "WEBSITE" && !a.link) issues.push(`El anuncio "${a.name}" requiere URL de destino.`);
     }
-    if (!s.targeting?.countries?.length && !s.targeting?.cities?.length) issues.push(`El conjunto "${s.name}" requiere ubicación.`);
+    if (!hasLocation(s.targeting || {})) issues.push(`El conjunto "${s.name}" requiere ubicación.`);
+    if (d.destination === "FORM") for (const x of validateLeadForm(s.leadForm)) issues.push(`Conjunto "${s.name}": ${x}`);
   }
   if (d.adAccountId) {
     const acc = await db.metaAdAccount.findUnique({ where: { id: d.adAccountId } });
@@ -91,6 +97,7 @@ export async function publishDraft(draftId: string) {
         objective: d.objective,
         status: "PAUSED",
         special_ad_categories: d.specialAdCategories.length ? d.specialAdCategories : [],
+        ...(isRestricted(d.specialAdCategories) ? { special_ad_category_country: specialCountries(d) } : {}),
         buying_type: "AUCTION",
         is_adset_budget_sharing_enabled: false,
       });
@@ -101,6 +108,14 @@ export async function publishDraft(draftId: string) {
 
     for (const s of adsets) {
       const goal = OBJECTIVE_GOAL[d.objective] || OBJECTIVE_GOAL.OUTCOME_TRAFFIC;
+      // Formulario instantáneo: se crea en la página una sola vez y se guarda su id en el borrador.
+      let formId = s.leadForm?.existingFormId || s.leadForm?.metaFormId;
+      if (d.destination === "FORM" && !formId) {
+        formId = await createLeadForm(d.adAccountId!, d.pageId!, s.leadForm!);
+        s.leadForm = { ...s.leadForm!, metaFormId: formId };
+        await db.campaignDraft.update({ where: { id: draftId }, data: { adsets: adsets as any } });
+        await log("leadform", true, formId, s.leadForm.name);
+      }
       const promoted: Record<string, unknown> = { page_id: d.pageId };
       if (d.destination === "WEBSITE" && d.pixelId && d.objective === "OUTCOME_SALES") {
         promoted.pixel_id = d.pixelId;
@@ -114,24 +129,24 @@ export async function publishDraft(draftId: string) {
         billing_event: goal.billing,
         optimization_goal: goal.optimization,
         bid_strategy: "LOWEST_COST_WITHOUT_CAP",
-        targeting: buildTargeting(s.targeting),
+        targeting: buildTargeting(s.targeting, d.specialAdCategories),
         promoted_object: promoted,
         start_time: d.startTime?.toISOString(),
         end_time: d.endTime?.toISOString(),
       };
-      if (d.destination === "WHATSAPP") {
-        adsetParams.destination_type = "WHATSAPP";
-        if (d.client.whatsapp) promoted.whatsapp_phone_number = d.client.whatsapp;
-      } else if (d.destination === "MESSENGER") adsetParams.destination_type = "MESSENGER";
-      else if (d.destination === "INSTAGRAM_DM") adsetParams.destination_type = "INSTAGRAM_DIRECT";
-      else if (d.destination === "WEBSITE") adsetParams.destination_type = "WEBSITE";
+      Object.assign(adsetParams, destinationAdsetParams(d.destination));
+      if (d.destination === "WHATSAPP" && d.client.whatsapp) promoted.whatsapp_phone_number = d.client.whatsapp;
       const adset = await gpost<{ id: string }>(`${acc.actId}/adsets`, creds, adsetParams as any);
       await log("adset", true, adset.id, s.name);
 
       for (const a of s.ads) {
         const hash = await uploadImage(creds, acc.actId, a.creativeId);
-        const cta = d.destination === "WHATSAPP" ? "WHATSAPP_MESSAGE" : a.cta || "LEARN_MORE";
-        const link = d.destination === "WHATSAPP" ? "https://api.whatsapp.com/send" : a.link || "";
+        const link =
+          d.destination === "WHATSAPP"
+            ? "https://api.whatsapp.com/send"
+            : d.destination === "FORM"
+              ? a.link || `https://www.facebook.com/${d.pageId}`
+              : a.link || "";
         const spec: Record<string, unknown> = {
           page_id: d.pageId,
           link_data: {
@@ -140,7 +155,7 @@ export async function publishDraft(draftId: string) {
             message: a.primaryText,
             name: a.headline,
             description: a.description,
-            call_to_action: { type: cta, value: d.destination === "WHATSAPP" ? { app_destination: "WHATSAPP" } : { link } },
+            call_to_action: callToAction(d.destination, { cta: a.cta, link, formId }),
           },
         };
         if (d.igAccountId) spec.instagram_user_id = d.igAccountId;
@@ -180,20 +195,14 @@ async function uploadImage(creds: MetaCreds, actId: string, creativeId: string):
   return first.hash;
 }
 
-function buildTargeting(t: DraftAdset["targeting"]) {
-  const out: Record<string, unknown> = {
-    geo_locations: {
-      ...(t.countries?.length ? { countries: t.countries } : {}),
-      ...(t.cities?.length ? { cities: t.cities } : {}),
-    },
-    age_min: t.ageMin ?? 18,
-    age_max: t.ageMax ?? 65,
-    targeting_automation: { advantage_audience: 0 },
-  };
-  if (t.genders?.length) out.genders = t.genders;
-  if (t.interests?.length) out.flexible_spec = [{ interests: t.interests.map((i) => ({ id: i.id, name: i.name })) }];
-  if (t.customAudiences?.length) out.custom_audiences = t.customAudiences;
-  if (t.excludedCustomAudiences?.length) out.excluded_custom_audiences = t.excludedCustomAudiences;
-  if (t.placements && t.placements !== "advantage") Object.assign(out, t.placements);
-  return out;
+/** Países del anuncio para special_ad_category_country (derivados de la segmentación). */
+function specialCountries(d: { adsets: unknown }): string[] {
+  const set = new Set<string>();
+  for (const s of ((d.adsets as unknown as DraftAdset[]) || [])) {
+    s.targeting?.countries?.forEach((c) => set.add(c));
+    for (const g of [...(s.targeting?.regions ?? []), ...(s.targeting?.cities ?? [])] as { country_code?: string }[]) {
+      if (g.country_code) set.add(g.country_code);
+    }
+  }
+  return [...set];
 }

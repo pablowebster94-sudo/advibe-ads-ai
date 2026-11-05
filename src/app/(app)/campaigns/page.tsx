@@ -17,7 +17,7 @@ async function create(f: FormData) {
   const link = c!.links.length === 1 ? c!.links[0] : null;
   const d = await db.campaignDraft.create({
     data: {
-      clientId, name, objective: str(f, "objective") || "OUTCOME_ENGAGEMENT", destination: str(f, "destination") || "WHATSAPP",
+      clientId, name, objective: str(f, "destination") === "FORM" ? "OUTCOME_LEADS" : str(f, "objective") || "OUTCOME_ENGAGEMENT", destination: str(f, "destination") || "WHATSAPP",
       dailyBudget: num(f, "dailyBudget") ?? 5,
       adAccountId: link?.adAccountId, pageId: link?.pageId, igAccountId: link?.igAccountId, pixelId: link?.pixelId,
     },
@@ -40,7 +40,7 @@ export default async function CampaignsPage({ searchParams }: { searchParams: Pr
         <div className="sm:col-span-2"><label className="label">Cliente</label><select name="clientId" defaultValue={sp.client} className="input" required>{clients.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}</select></div>
         <div className="sm:col-span-2"><label className="label">Nombre</label><input name="name" className="input" required /></div>
         <div><label className="label">Objetivo</label><select name="objective" className="input"><option value="OUTCOME_ENGAGEMENT">Interacción/mensajes</option><option value="OUTCOME_LEADS">Leads</option><option value="OUTCOME_SALES">Ventas</option><option value="OUTCOME_TRAFFIC">Tráfico</option><option value="OUTCOME_AWARENESS">Reconocimiento</option></select></div>
-        <div><label className="label">Destino</label><select name="destination" className="input"><option value="WHATSAPP">WhatsApp</option><option value="MESSENGER">Messenger</option><option value="INSTAGRAM_DM">Instagram DM</option><option value="WEBSITE">Sitio web</option></select></div>
+        <div><label className="label">Destino</label><select name="destination" className="input"><option value="WHATSAPP">WhatsApp</option><option value="MESSENGER">Messenger</option><option value="INSTAGRAM_DM">Instagram DM</option><option value="WEBSITE">Sitio web</option><option value="FORM">Formulario instantáneo</option></select></div>
         <div><label className="label">Presupuesto diario</label><input name="dailyBudget" type="number" step="0.01" min="1" defaultValue={5} className="input" /></div>
         <div className="flex items-end"><button className="btn w-full" disabled={clients.length === 0}>Crear borrador</button></div>
       </form>
