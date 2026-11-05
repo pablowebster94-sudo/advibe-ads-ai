@@ -7,8 +7,8 @@ import { back, num, str, writer } from "@/lib/actions-util";
 import { money } from "@/lib/format";
 import { DraftAdset, PublishBlocked, publishDraft, validateDraft } from "@/lib/meta/publish";
 import { searchGeo, searchInterests } from "@/lib/meta/targeting";
-import { listLeadForms, type ExistingForm } from "@/lib/meta/leadforms";
-import { LEAD_CTAS, SPECIAL_CATEGORIES, STANDARD_FIELDS, restrictionNotes, type LeadFormConfig, type StandardField } from "@/lib/meta/spec";
+import { listLeadForms, listLeads, type ExistingForm, type Lead } from "@/lib/meta/leadforms";
+import { LEAD_CTAS, SPECIAL_CATEGORIES, STANDARD_FIELDS, buildTargeting, restrictionNotes, type LeadFormConfig, type StandardField } from "@/lib/meta/spec";
 import { Notice, PageHeader, StatusBadge } from "@/components/ui";
 
 export const maxDuration = 120;
@@ -231,6 +231,18 @@ export default async function DraftPage({ params, searchParams }: { params: Prom
   const acc = d.adAccountId ? await db.metaAdAccount.findUnique({ where: { id: d.adAccountId } }) : null;
   const audiences = ((acc?.audiences as any[]) || []) as { id: string; name: string }[];
   const ed = editable(d.status);
+  // Leads de los formularios ya creados (solo lectura; requiere leads_retrieval).
+  const leadForms = adsets.map((a) => a.leadForm?.metaFormId || a.leadForm?.existingFormId).filter((x): x is string => Boolean(x));
+  const leadsByForm: Record<string, { leads?: Lead[]; error?: string }> = {};
+  if (d.destination === "FORM" && d.status === "PUBLISHED_PAUSED" && d.adAccountId && d.pageId) {
+    for (const fid of [...new Set(leadForms)]) {
+      try {
+        leadsByForm[fid] = { leads: await listLeads(d.adAccountId, d.pageId, fid, 50) };
+      } catch (e: any) {
+        leadsByForm[fid] = { error: e.message };
+      }
+    }
+  }
   let forms: ExistingForm[] = [];
   let formsError = "";
   if (d.destination === "FORM" && d.adAccountId && d.pageId && ed) {
@@ -287,6 +299,8 @@ export default async function DraftPage({ params, searchParams }: { params: Prom
                 </div>
                 {restrictionNotes(a.targeting, d.specialAdCategories).map((n) => <div key={n} className="text-xs text-sky-300">{n}</div>)}
                 {a.leadForm && <div className="text-xs text-zinc-400">Formulario: {a.leadForm.existingFormId ? `existente ${a.leadForm.existingFormId}` : `${a.leadForm.name} · ${a.leadForm.fields.length + a.leadForm.customQuestions.length} pregunta(s)`}{a.leadForm.metaFormId ? ` · creado en Meta ${a.leadForm.metaFormId}` : ""}</div>}
+                <details className="text-xs text-zinc-400"><summary className="cursor-pointer">Segmentación final que recibirá Meta</summary>
+                  <pre className="mt-1 max-h-60 overflow-auto rounded-lg bg-black/40 p-2 text-[11px]">{JSON.stringify(buildTargeting(a.targeting, d.specialAdCategories), null, 2)}</pre></details>
                 {a.notes?.interestTerms?.length > 0 && !a.targeting.interests?.length && <div className="text-xs text-amber-300">Sugeridos por la IA sin validar: {a.notes.interestTerms.join(", ")}</div>}
               </div>
               {ed && <form action={delAdset}><input type="hidden" name="id" value={d.id} /><input type="hidden" name="idx" value={i} /><button className="text-xs text-red-300 hover:underline">Eliminar conjunto</button></form>}
@@ -378,6 +392,19 @@ export default async function DraftPage({ params, searchParams }: { params: Prom
             <button className="btn" disabled={issues.length > 0}>Publicar en Meta (en pausa)</button>
           </form>
         )}
+        {Object.entries(leadsByForm).map(([fid, r]) => (
+          <div key={fid} className="space-y-2 rounded-xl border border-white/10 p-3 text-sm">
+            <div className="flex items-center justify-between"><b className="text-white">Leads del formulario {fid}</b>
+              {r.leads && <a className="btn-ghost text-xs" href={`/api/leads/${fid}?draft=${d.id}`}>Descargar CSV</a>}</div>
+            {r.error && <div className="text-xs text-amber-300">Meta no permitió leer los leads: {r.error}</div>}
+            {r.leads && r.leads.length === 0 && <div className="text-xs text-zinc-500">Aún no hay leads.</div>}
+            {r.leads && r.leads.length > 0 && (
+              <ul className="max-h-64 space-y-1 overflow-auto text-xs text-zinc-300">{r.leads.map((l) => (
+                <li key={l.id} className="rounded bg-white/5 px-2 py-1">{new Date(l.created_time).toLocaleString("es-EC")} · {l.field_data.map((f) => `${f.name}: ${f.values.join(", ")}`).join(" · ")}</li>
+              ))}</ul>
+            )}
+          </div>
+        ))}
         {d.logs.length > 0 && (
           <details className="text-xs text-zinc-400"><summary className="cursor-pointer">Registro de publicación</summary>
             <ul className="mt-2 space-y-1">{d.logs.map((l) => <li key={l.id}>{l.ok ? "✓" : "✗"} {l.step} {l.metaId} {l.message}</li>)}</ul></details>

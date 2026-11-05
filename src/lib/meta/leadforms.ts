@@ -2,6 +2,8 @@ import { db } from "../db";
 import { credsFor } from "./connect";
 import { MetaCreds, gall, gget, gpost } from "./graph";
 import { LeadFormConfig, buildLeadFormPayload } from "./spec";
+import type { Lead } from "./leadforms-csv";
+export { leadsToCsv, type Lead } from "./leadforms-csv";
 
 /**
  * Instant Forms live on the Facebook Page, not on the ad account, and Meta
@@ -45,4 +47,13 @@ export async function leadgenTosAccepted(adAccountId: string, pageId: string): P
   } catch {
     return null;
   }
+}
+
+/**
+ * Lee los leads de un formulario (solo lectura). Requiere leads_retrieval y
+ * acceso a la página; si Meta lo niega se devuelve su error tal cual.
+ */
+export async function listLeads(adAccountId: string, pageId: string, formId: string, max = 200): Promise<Lead[]> {
+  const creds = await pageCreds(adAccountId, pageId);
+  return gall<Lead>(`${formId}/leads`, creds, { fields: "id,created_time,ad_id,campaign_id,field_data" }, max);
 }

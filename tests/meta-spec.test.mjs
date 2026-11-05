@@ -89,3 +89,15 @@ test("anuncio de formulario: CTA permitida y enlace fb.me", () => {
   assert.equal(spec.callToAction("FORM", { cta: "CONTACT_US", formId: "1" }).type, "SIGN_UP");
   assert.equal(spec.callToAction("FORM", { cta: "DOWNLOAD", formId: "1" }).type, "DOWNLOAD");
 });
+
+test("leads a CSV: columnas por pregunta y comillas escapadas", async () => {
+  const { leadsToCsv } = await import("../src/lib/meta/leadforms-csv.ts");
+  const csv = leadsToCsv([
+    { id: "1", created_time: "2026-11-05T10:00:00+0000", field_data: [{ name: "full_name", values: ['Ana "A"'] }, { name: "phone_number", values: ["+593999"] }] },
+    { id: "2", created_time: "2026-11-05T11:00:00+0000", field_data: [{ name: "full_name", values: ["Luis"] }] },
+  ]);
+  const lines = csv.split("\n");
+  assert.equal(lines[0], '"fecha","full_name","phone_number"');
+  assert.ok(lines[1].includes('"Ana ""A"""'));
+  assert.ok(lines[2].endsWith(',""'));
+});
