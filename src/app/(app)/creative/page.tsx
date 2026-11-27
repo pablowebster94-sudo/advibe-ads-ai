@@ -5,6 +5,7 @@ import { audit } from "@/lib/audit";
 import { back, str, writer } from "@/lib/actions-util";
 import { composeCreative, FORMATS } from "@/lib/creative/compose";
 import { backgroundPrompt, externalPrompt, scenePrompt } from "@/lib/creative/prompts";
+import { CREATIVE_DIRECTIONS, creativeQualityChecks, type CreativeDirection, type CreativeObjective } from "@/lib/creative/director";
 import { CopyButton } from "@/components/copy-button";
 import { generateImage } from "@/lib/ai/providers";
 import { generateCopy } from "@/lib/ai/copy";
@@ -35,6 +36,12 @@ async function create(f: FormData) {
   const cta = str(f, "ctaText");
   const badges = str(f, "badges").split(",").map((b) => b.trim()).filter(Boolean).slice(0, 2);
   const scene = str(f, "scene") || "estudio elegante, luz suave";
+  const direction = (str(f, "direction") || "commercial") as CreativeDirection;
+  const objective = (str(f, "objective") || "conversion") as CreativeObjective;
+  const audience = str(f, "audience");
+  const checks = creativeQualityChecks({ title, cta, format: formats[0], hasProductReference: Boolean(product), aiScene: mode === "ai_scene" });
+  const invalid = checks.find((check) => check.id !== "product" && !check.pass);
+  if (invalid) back(path, "error", invalid.note || `Revisa: ${invalid.label}.`);
   const variations = Math.min(Math.max(Number(str(f, "variations")) || 1, 1), 3);
   const group = `g_${Date.now()}`;
   let error = "";
@@ -47,12 +54,12 @@ async function create(f: FormData) {
         let usedPrompt = "";
         let provider: string | undefined;
         if (mode === "ai_background") {
-          usedPrompt = backgroundPrompt({ scene, format: fmt, colors });
+          usedPrompt = backgroundPrompt({ scene, format: fmt, colors, direction, objective, audience });
           const img = await generateImage(s.orgId, usedPrompt, [], fmt);
           background = { data: img.data, mime: img.mimeType };
           provider = img.provider;
         } else if (mode === "ai_scene") {
-          usedPrompt = scenePrompt({ scene, format: fmt, brand: client!.name });
+          usedPrompt = scenePrompt({ scene, format: fmt, brand: client!.name, direction, objective, audience });
           const img = await generateImage(s.orgId, usedPrompt, [{ data: Buffer.from(product!.data), mimeType: product!.mimeType }], fmt);
           background = { data: img.data, mime: img.mimeType };
           fullScene = true;
@@ -99,8 +106,10 @@ async function review(f: FormData) {
   const id = str(f, "id");
   const c = await db.creative.findFirst({ where: { id, client: { orgId: s.orgId } } });
   if (!c) back("/creative", "error", "No encontrada.");
-  await db.creative.update({ where: { id }, data: { reviewed: f.get("approved") === "1" } });
-  await audit(s, "creative.review", id, { approved: f.get("approved") === "1" });
+  const approved = f.get("approved") === "1";
+  if (approved && ["identity", "brand", "text"].some((key) => f.get(key) !== "1")) back(`/creative?client=${c!.clientId}`, "error", "Marca las tres verificaciones antes de confirmar.");
+  await db.creative.update({ where: { id }, data: { reviewed: approved } });
+  await audit(s, "creative.review", id, { approved, checks: approved ? ["identity", "brand", "text"] : [] });
   back(`/creative?client=${c!.clientId}`, "ok", "Revisión de fidelidad guardada.");
 }
 
@@ -149,7 +158,7 @@ async function del(f: FormData) {
   back(`/creative?client=${c!.clientId}`, "ok", "Eliminada.");
 }
 
-export default async function CreativePage({ searchParams }: { searchParams: Promise<{ client?: string; ok?: string; error?: string; pscene?: string; pformat?: string; pmode?: string; ptitle?: string; pprice?: string; pbadges?: string }> }) {
+export default async function CreativePage({ searchParams }: { searchParams: Promise<{ client?: string; ok?: string; error?: string; pscene?: string; pformat?: string; pmode?: string; ptitle?: string; pprice?: string; pbadges?: string; pdir?: string; pobj?: string; paud?: string }> }) {
   const s = await requireSession();
   const sp = await searchParams;
   const clients = await db.client.findMany({ where: { orgId: s.orgId }, orderBy: { name: "asc" } });
@@ -160,7 +169,10 @@ export default async function CreativePage({ searchParams }: { searchParams: Pro
   const pscene = (sp.pscene ?? "").trim();
   const pformat = sp.pformat && sp.pformat in FORMATS ? sp.pformat : "1:1";
   const pmode = sp.pmode === "ai_background" ? "ai_background" : "ai_scene";
-  const promptText = client && pscene ? externalPrompt({ mode: pmode, scene: pscene, format: pformat, brand: client.name, colors: client.brandColors, industry: client.industry ?? undefined }) : "";
+  const pdir = (sp.pdir || "commercial") as CreativeDirection;
+  const pobj = (sp.pobj || "conversion") as CreativeObjective;
+  const paud = sp.paud || "";
+  const promptText = client && pscene ? externalPrompt({ mode: pmode, scene: pscene, format: pformat, brand: client.name, colors: client.brandColors, industry: client.industry ?? undefined, direction: pdir, objective: pobj, audience: paud }) : "";
   const overlay = [sp.ptitle && `Título: ${sp.ptitle}`, sp.pprice && `Precio: ${sp.pprice}`, sp.pbadges && `Badges: ${sp.pbadges}`].filter(Boolean) as string[];
 
   return (
@@ -188,7 +200,10 @@ export default async function CreativePage({ searchParams }: { searchParams: Pro
                 <option value="ai_background">Fondo con IA + foto original intacta</option>
                 <option value="ai_scene">Escena completa con IA (revisión humana obligatoria)</option>
               </select></div>
-            <div className="sm:col-span-2"><label className="label">Escena / fondo (modos IA)</label><input name="scene" className="input" placeholder="dormitorio moderno, luz cálida de tarde" /></div>
+            <div className="sm:col-span-2"><label className="label">Escena / fondo</label><input name="scene" className="input" placeholder="dormitorio moderno, luz cálida de tarde" /></div>
+            <div><label className="label">Dirección creativa</label><select name="direction" className="input" defaultValue="commercial">{Object.entries(CREATIVE_DIRECTIONS).map(([key, d]) => <option key={key} value={key}>{d.label}</option>)}</select></div>
+            <div><label className="label">Objetivo</label><select name="objective" className="input" defaultValue="conversion"><option value="conversion">Conversión / venta</option><option value="awareness">Reconocimiento</option><option value="engagement">Interacción</option><option value="branding">Branding</option></select></div>
+            <div className="sm:col-span-2"><label className="label">Audiencia (opcional)</label><input name="audience" className="input" placeholder="Ej. familias jóvenes, profesionales, compradores premium" /></div>
             <div><label className="label">Título en la imagen</label><input name="title" className="input" maxLength={60} /></div>
             <div><label className="label">Precio (texto exacto)</label><input name="price" className="input" placeholder="$299" /></div>
             <div><label className="label">Badges (máx. 2, coma)</label><input name="badges" className="input" placeholder="ENVÍO GRATIS" /></div>
@@ -198,7 +213,7 @@ export default async function CreativePage({ searchParams }: { searchParams: Pro
             <fieldset className="sm:col-span-2"><label className="label">Formatos</label>
               <div className="flex gap-4 text-sm">{Object.keys(FORMATS).map((k) => <label key={k} className="flex items-center gap-2"><input type="checkbox" name="formats" value={k} defaultChecked={k === "1:1"} /> {k}</label>)}</div></fieldset>
             <div className="flex items-end sm:col-span-2 lg:col-span-4"><button className="btn" disabled={originals.length === 0}>Generar</button>
-              <span className="ml-3 text-xs text-zinc-500">Los modos con IA consumen crédito del proveedor configurado.</span></div>
+              <span className="ml-3 text-xs text-zinc-500">La dirección creativa, objetivo y audiencia guían el prompt. Los modos con IA consumen crédito.</span></div>
           </form>
 
           <section className="card space-y-3">
@@ -207,13 +222,16 @@ export default async function CreativePage({ searchParams }: { searchParams: Pro
             <form method="get" className="grid gap-3 sm:grid-cols-4">
               <input type="hidden" name="client" value={client.id} />
               <div className="sm:col-span-4"><label className="label">Escena / fondo</label><input name="pscene" defaultValue={pscene} className="input" placeholder="dormitorio moderno, luz cálida de tarde" required /></div>
+              <div><label className="label">Dirección creativa</label><select name="pdir" defaultValue={pdir} className="input">{Object.entries(CREATIVE_DIRECTIONS).map(([key, d]) => <option key={key} value={key}>{d.label}</option>)}</select></div>
+              <div><label className="label">Objetivo</label><select name="pobj" defaultValue={pobj} className="input"><option value="conversion">Conversión / venta</option><option value="awareness">Reconocimiento</option><option value="engagement">Interacción</option><option value="branding">Branding</option></select></div>
+              <div className="sm:col-span-2"><label className="label">Audiencia</label><input name="paud" defaultValue={paud} className="input" placeholder="Ej. familias jóvenes, compradores premium" /></div>
               <div><label className="label">Tipo</label>
                 <select name="pmode" defaultValue={pmode} className="input"><option value="ai_scene">Escena con mi producto (adjuntas la foto)</option><option value="ai_background">Solo fondo vacío</option></select></div>
               <div><label className="label">Formato</label>
                 <select name="pformat" defaultValue={pformat} className="input">{Object.keys(FORMATS).map((k) => <option key={k}>{k}</option>)}</select></div>
               <div><label className="label">Título (para después)</label><input name="ptitle" defaultValue={sp.ptitle ?? ""} className="input" maxLength={60} /></div>
               <div><label className="label">Precio (para después)</label><input name="pprice" defaultValue={sp.pprice ?? ""} className="input" /></div>
-              <div className="sm:col-span-4"><button className="btn-ghost">Armar prompt</button></div>
+              <div className="sm:col-span-4"><button className="btn-ghost">Crear brief y prompt</button></div>
             </form>
             {promptText && (
               <div className="space-y-2">
@@ -244,7 +262,7 @@ export default async function CreativePage({ searchParams }: { searchParams: Pro
                     {c.mode === "ai_scene" && (
                       <form action={review} className="flex items-center gap-2 text-xs">
                         <input type="hidden" name="id" value={c.id} />
-                        <button name="approved" value={c.reviewed ? "0" : "1"} className="btn-ghost !py-1 text-xs">{c.reviewed ? "Quitar verificación" : "Confirmo: el producto es idéntico al real"}</button>
+                        {!c.reviewed && <div className="space-y-1 text-xs text-zinc-400"><label className="flex gap-2"><input type="checkbox" name="identity" value="1" required /> Producto: modelo, forma, color y detalles fieles.</label><label className="flex gap-2"><input type="checkbox" name="brand" value="1" required /> Logo y elementos de marca correctos.</label><label className="flex gap-2"><input type="checkbox" name="text" value="1" required /> Texto, precio y beneficios correctos; nada inventado.</label></div>}<button name="approved" value={c.reviewed ? "0" : "1"} className="btn-ghost !py-1 text-xs">{c.reviewed ? "Quitar verificación" : "Confirmar control de calidad"}</button>
                       </form>
                     )}
                     <form action={saveCopy} className="space-y-2">
