@@ -34,7 +34,7 @@ async function create(f: FormData) {
   const price = str(f, "price");
   const cta = str(f, "ctaText");
   const badges = str(f, "badges").split(",").map((b) => b.trim()).filter(Boolean).slice(0, 2);
-  const scene = str(f, "scene") || "estudio elegante, luz suave";\n  const direction = (str(f, "direction") || "commercial") as CreativeDirection;\n  const objective = (str(f, "objective") || "conversion") as CreativeObjective;\n  const audience = str(f, "audience");
+  const scene = str(f, "scene") || "estudio elegante, luz suave";\n  const direction = (str(f, "direction") || "commercial") as CreativeDirection;\n  const objective = (str(f, "objective") || "conversion") as CreativeObjective;\n  const audience = str(f, "audience");\n  const checks = creativeQualityChecks({ title, cta, format: formats[0], hasProductReference: Boolean(product), aiScene: mode === "ai_scene" });\n  const invalid = checks.find((check) => check.id !== "product" && !check.pass);\n  if (invalid) back(path, "error", invalid.note || `Revisa: ${invalid.label}.`);
   const variations = Math.min(Math.max(Number(str(f, "variations")) || 1, 1), 3);
   const group = `g_${Date.now()}`;
   let error = "";
