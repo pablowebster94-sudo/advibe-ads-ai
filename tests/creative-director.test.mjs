@@ -11,6 +11,12 @@ test("brief incluye concepto, dirección y objetivo", () => {
   assert.match(prompt, /No escribas ningún texto/);
 });
 
+test("inputs desconocidos caen a valores seguros", () => {
+  const prompt = buildCreativeBrief({ scene: "fondo", format: "1:1", direction: "no-es-valido", objective: "no-es-valido" });
+  assert.match(prompt, /Comercial \/ Performance/);
+  assert.match(prompt, /comprensión rápida de la oferta/);
+});
+
 test("direcciones creativas tienen guidance", () => {
   assert.equal(Object.keys(CREATIVE_DIRECTIONS).length, 6);
   for (const direction of Object.values(CREATIVE_DIRECTIONS)) assert.ok(direction.guidance.length > 40);
