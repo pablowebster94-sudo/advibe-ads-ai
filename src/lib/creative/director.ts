@@ -26,8 +26,8 @@ export function buildCreativeBrief(opts: {
   audience?: string;
   mode?: "ai_scene" | "ai_background";
 }) {
-  const direction = CREATIVE_DIRECTIONS[opts.direction ?? "commercial"];
-  const objective = OBJECTIVES[opts.objective ?? "conversion"];
+  const direction = CREATIVE_DIRECTIONS[opts.direction ?? "commercial"] ?? CREATIVE_DIRECTIONS.commercial;
+  const objective = OBJECTIVES[opts.objective ?? "conversion"] ?? OBJECTIVES.conversion;
   const mode = opts.mode ?? "ai_scene";
   const isBackground = mode === "ai_background";
   return [
