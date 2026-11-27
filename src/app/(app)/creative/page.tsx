@@ -42,9 +42,6 @@ async function create(f: FormData) {
   const checks = creativeQualityChecks({ title, cta, format: formats[0], hasProductReference: Boolean(product), aiScene: mode === "ai_scene" });
   const invalid = checks.find((check) => check.id !== "product" && !check.pass);
   if (invalid) back(path, "error", invalid.note || `Revisa: ${invalid.label}.`);
-  const checks = creativeQualityChecks({ title, cta, format: formats[0], hasProductReference: Boolean(product), aiScene: mode === "ai_scene" });
-  const invalid = checks.find((check) => check.id !== "product" && !check.pass);
-  if (invalid) back(path, "error", invalid.note || `Revisa: ${invalid.label}.`);
   const variations = Math.min(Math.max(Number(str(f, "variations")) || 1, 1), 3);
   const group = `g_${Date.now()}`;
   let error = "";
